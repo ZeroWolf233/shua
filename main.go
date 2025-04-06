@@ -8,10 +8,37 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
 )
+
+// 新增环境变量映射函数
+func getEnvString(key, defaultValue string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return defaultValue
+}
+
+func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
+	if value, exists := os.LookupEnv(key); exists {
+		if d, err := time.ParseDuration(value); err == nil {
+			return d
+		}
+	}
+	return defaultValue
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	if value, exists := os.LookupEnv(key); exists {
+		if i, err := strconv.Atoi(value); err == nil {
+			return i
+		}
+	}
+	return defaultValue
+}
 
 func worker(ctx context.Context, id int, wg *sync.WaitGroup, url string, interval time.Duration) {
 	defer wg.Done()
@@ -78,9 +105,17 @@ func handleResponse(id int, resp *http.Response, err error, start time.Time) (st
 
 func main() {
 	var (
-		url      = flag.String("u", "https://s3.pysio.online/pcl2-ce/PCL2_CE_x64.exe", "请求的目标URL地址")
-		interval = flag.Duration("i", 0, "单个工作进程的请求间隔")
-		workers  = flag.Int("w", 4, "并发工作进程数量")
+		url = flag.String("u",
+			getEnvString("u", "https://s3.pysio.online/pcl2-ce/PCL2_CE_x64.exe"),
+			"请求的目标URL地址")
+
+		interval = flag.Duration("i",
+			getEnvDuration("i", 0),
+			"请求间隔时间")
+
+		workers = flag.Int("w",
+			getEnvInt("w", 4),
+			"并发worker数量")
 	)
 	flag.Parse()
 
