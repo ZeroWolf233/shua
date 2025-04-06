@@ -79,7 +79,7 @@ func handleResponse(id int, resp *http.Response, err error, start time.Time) (st
 func main() {
 	var (
 		url      = flag.String("u", "https://s3.pysio.online/pcl2-ce/PCL2_CE_x64.exe", "请求的目标URL地址")
-		interval = flag.Duration("i", 0*time.Second, "单个工作进程的请求间隔")
+		interval = flag.Duration("i", 0, "单个工作进程的请求间隔")
 		workers  = flag.Int("w", 4, "并发工作进程数量")
 	)
 	flag.Parse()
