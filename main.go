@@ -14,7 +14,6 @@ import (
 	"time"
 )
 
-// 新增环境变量映射函数
 func getEnvString(key, defaultValue string) string {
 	if value, exists := os.LookupEnv(key); exists {
 		return value
@@ -40,14 +39,13 @@ func getEnvInt(key string, defaultValue int) int {
 	return defaultValue
 }
 
-func worker(ctx context.Context, id int, wg *sync.WaitGroup, url string, interval time.Duration) {
+func worker(ctx context.Context, id int, wg *sync.WaitGroup, url string, interval time.Duration, userAgent string) {
 	defer wg.Done()
 
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
 
-	// 零间隔模式判断
 	noInterval := interval == 0
 
 	fmt.Printf("Worker %d 启动 [模式: %s]\n",
@@ -57,17 +55,26 @@ func worker(ctx context.Context, id int, wg *sync.WaitGroup, url string, interva
 
 	for {
 		select {
-		case <-ctx.Done(): // 接收停止信号
+		case <-ctx.Done():
 			fmt.Printf("Worker %d 停止\n", id)
 			return
 		default:
 			start := time.Now()
-			resp, err := client.Get(url)
+
+			// 创建带有UA的请求
+			req, err := http.NewRequest("GET", url, nil)
+			if err != nil {
+				fmt.Printf("[Worker %d][%s] 创建请求失败: %v\n",
+					id, time.Now().Format("2006-01-02 15:04:05"), err)
+				continue
+			}
+			req.Header.Set("User-Agent", userAgent)
+
+			resp, err := client.Do(req)
 			if handled := handleResponse(id, resp, err, start); handled {
 				return
 			}
 
-			// 非零间隔模式等待
 			if !noInterval {
 				select {
 				case <-ctx.Done():
@@ -79,7 +86,6 @@ func worker(ctx context.Context, id int, wg *sync.WaitGroup, url string, interva
 	}
 }
 
-// 公共响应处理函数
 func handleResponse(id int, resp *http.Response, err error, start time.Time) (stop bool) {
 	if err != nil {
 		fmt.Printf("[Worker %d][%s] 请求失败: %v\n",
@@ -115,7 +121,11 @@ func main() {
 
 		workers = flag.Int("w",
 			getEnvInt("w", 4),
-			"并发worker数量")
+			"并发Worker数量")
+
+		userAgent = flag.String("ua",
+			getEnvString("ua", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"),
+			"User-Agent")
 	)
 	flag.Parse()
 
@@ -129,29 +139,25 @@ func main() {
 		return
 	}
 
-	// 创建上下文和取消函数
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	var wg sync.WaitGroup
 
-	// 启动worker
 	for i := 1; i <= *workers; i++ {
 		wg.Add(1)
-		go worker(ctx, i, &wg, *url, *interval)
+		go worker(ctx, i, &wg, *url, *interval, *userAgent)
 	}
 
-	// 信号处理
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	fmt.Println("程序已启动，按 Ctrl+C 停止...")
-	<-sigChan // 阻塞等待信号
+	<-sigChan
 
-	// 触发优雅停止
 	fmt.Println("\n接收到停止信号，停止中...")
-	cancel()  // 通知所有worker停止
-	wg.Wait() // 等待所有worker退出
+	cancel()
+	wg.Wait()
 
 	fmt.Println("所有Worker已安全停止")
 }
