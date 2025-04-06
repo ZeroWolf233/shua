@@ -10,9 +10,9 @@ docker run -d \
   --name shua \
   --restart unless-stopped \
   zerowolf233/shua:latest \
-  -u https://lf5-j1gamecdn-cn.dailygn.com/obj/lf-game-lf/gdl_app_2682/1233880772355.mp4 \
-  -w 128 \
-  -i 3s
+  -e u=https://lf5-j1gamecdn-cn.dailygn.com/obj/lf-game-lf/gdl_app_2682/1233880772355.mp4 \
+  -e w=128 \
+  -e i=3s
 ```
 
 ## 使用
