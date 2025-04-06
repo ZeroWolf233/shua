@@ -1,75 +1,73 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 )
 
-func worker(id int, wg *sync.WaitGroup, url string, interval time.Duration, stopChan <-chan struct{}) {
+func worker(ctx context.Context, id int, wg *sync.WaitGroup, url string, interval time.Duration) {
 	defer wg.Done()
 
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
 
-	// 零间隔处理模式
-	if interval == 0 {
-		fmt.Printf("工作进程 %d 启动（无间隔）\n", id)
-		for {
-			select {
-			case <-stopChan:
-				fmt.Printf("工作进程 %d 停止\n", id)
-				return
-			default:
-				start := time.Now()
-				resp, err := client.Get(url)
-				if handleResponse(id, resp, err, start) {
-					return
-				}
-			}
-		}
-	}
+	// 零间隔模式判断
+	noInterval := interval == 0
 
-	// 正常间隔模式
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	fmt.Printf("工作进程 %d 启动（间隔: %v）\n", id, interval)
+	fmt.Printf("Worker %d 启动 [模式: %s]\n",
+		id,
+		map[bool]string{true: "无间隔", false: fmt.Sprintf("间隔 %v", interval)}[noInterval],
+	)
 
 	for {
 		select {
-		case <-stopChan:
-			fmt.Printf("工作进程 %d 停止\n", id)
+		case <-ctx.Done(): // 接收停止信号
+			fmt.Printf("Worker %d 停止\n", id)
 			return
-		case <-ticker.C:
+		default:
 			start := time.Now()
 			resp, err := client.Get(url)
-			if handleResponse(id, resp, err, start) {
+			if handled := handleResponse(id, resp, err, start); handled {
 				return
+			}
+
+			// 非零间隔模式等待
+			if !noInterval {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(interval):
+				}
 			}
 		}
 	}
 }
 
 // 公共响应处理函数
-func handleResponse(id int, resp *http.Response, err error, start time.Time) bool {
+func handleResponse(id int, resp *http.Response, err error, start time.Time) (stop bool) {
 	if err != nil {
-		fmt.Printf("[工作进程 %d][%s] 请求失败: %v\n",
+		fmt.Printf("[Worker %d][%s] 请求失败: %v\n",
 			id, time.Now().Format("2006-01-02 15:04:05"), err)
 		return false
 	}
 
 	defer func() {
-		if resp != nil {
+		if resp != nil && resp.Body != nil {
 			io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
 		}
 	}()
 
-	fmt.Printf("[工作进程 %d][%s] 状态码: %d 耗时: %v\n",
+	fmt.Printf("[Worker %d][%s] 状态码: %d 耗时: %v\n",
 		id,
 		time.Now().Format("2006-01-02 15:04:05"),
 		resp.StatusCode,
@@ -88,7 +86,7 @@ func main() {
 
 	// 参数校验
 	if *workers <= 0 {
-		fmt.Println("[错误] 工作进程数量必须 > 0")
+		fmt.Println("[错误] worker数量必须 > 0")
 		return
 	}
 	if *interval < 0 {
@@ -96,12 +94,29 @@ func main() {
 		return
 	}
 
-	stopChan := make(chan struct{})
+	// 创建上下文和取消函数
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	var wg sync.WaitGroup
 
 	// 启动worker
 	for i := 1; i <= *workers; i++ {
 		wg.Add(1)
-		go worker(i, &wg, *url, *interval, stopChan)
+		go worker(ctx, i, &wg, *url, *interval)
 	}
+
+	// 信号处理
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	fmt.Println("程序已启动，按 Ctrl+C 停止...")
+	<-sigChan // 阻塞等待信号
+
+	// 触发优雅停止
+	fmt.Println("\n接收到停止信号，停止中...")
+	cancel()  // 通知所有worker停止
+	wg.Wait() // 等待所有worker退出
+
+	fmt.Println("所有Worker已安全停止")
 }
