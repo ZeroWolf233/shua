@@ -1,6 +1,6 @@
 FROM golang:1.20 AS builder
 WORKDIR /app
-COPY go.mod go.sum ./
+COPY go.mod ./
 RUN go mod download
 COPY . .
 RUN go build -o shua .
