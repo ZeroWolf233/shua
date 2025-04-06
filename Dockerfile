@@ -1,6 +1,6 @@
 FROM golang:1.23.4 AS builder
 WORKDIR /app
-COPY go.mod./
+COPY go.mod ./
 RUN go mod download
 COPY . .
 # 生成静态二进制文件
