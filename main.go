@@ -104,13 +104,4 @@ func main() {
 		wg.Add(1)
 		go worker(i, &wg, *url, *interval, stopChan)
 	}
-
-	// 处理退出信号（示例需替换为实际信号处理）
-	go func() {
-		<-time.After(30 * time.Second) // 示例：30秒后自动停止
-		close(stopChan)
-	}()
-
-	wg.Wait()
-	fmt.Println("所有工作进程已停止")
 }
