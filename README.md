@@ -9,10 +9,10 @@
 docker run -d \
   --name shua \
   --restart unless-stopped \
-  zerowolf233/shua:latest \
-  -e u=https://lf5-j1gamecdn-cn.dailygn.com/obj/lf-game-lf/gdl_app_2682/1233880772355.mp4 \
-  -e w=128 \
-  -e i=3s
+  -e u=https://adventurex-public.s3.ap-east-1.amazonaws.com/adventureX-logo.svg \
+  -e w=256 \
+  -e i=0s \
+  zerowolf233/shua:latest
 ```
 
 ## 使用
