@@ -5,53 +5,82 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 )
 
-func getEnvString(key, defaultValue string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
+func getEnvString(key, def string) string {
+	if v, ok := os.LookupEnv(key); ok {
+		return v
 	}
-	return defaultValue
+	return def
 }
-
-func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
-	if value, exists := os.LookupEnv(key); exists {
-		if d, err := time.ParseDuration(value); err == nil {
-			return d
+func getEnvBool(key string, def bool) bool {
+	if v, ok := os.LookupEnv(key); ok {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
 		}
 	}
-	return defaultValue
+	return def
 }
-
-func getEnvInt(key string, defaultValue int) int {
-	if value, exists := os.LookupEnv(key); exists {
-		if i, err := strconv.Atoi(value); err == nil {
-			return i
+func getEnvBytes(key string, def int64) int64 {
+	if v, ok := os.LookupEnv(key); ok {
+		if b, err := parseBytes(v); err == nil {
+			return b
 		}
 	}
-	return defaultValue
+	return def
+}
+func parseBytes(s string) (int64, error) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	mult := int64(1)
+	switch {
+	case strings.HasSuffix(s, "k"):
+		mult = 1024
+		s = s[:len(s)-1]
+	case strings.HasSuffix(s, "m"):
+		mult = 1024 * 1024
+		s = s[:len(s)-1]
+	case strings.HasSuffix(s, "g"):
+		mult = 1024 * 1024 * 1024
+		s = s[:len(s)-1]
+	case strings.HasSuffix(s, "t"):
+		mult = 1024 * 1024 * 1024 * 1024
+		s = s[:len(s)-1]
+	case strings.HasSuffix(s, "p"):
+		mult = 1024 * 1024 * 1024 * 1024 * 1024
+		s = s[:len(s)-1]
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	return int64(v * float64(mult)), err
 }
 
-func worker(ctx context.Context, id int, wg *sync.WaitGroup, url string, interval time.Duration, userAgent string) {
+func worker(ctx context.Context, id int, wg *sync.WaitGroup, url string,
+	interval time.Duration, ua string, rateLimit int64,
+	transport http.RoundTripper) {
+
 	defer wg.Done()
-
 	client := &http.Client{
-		Timeout: 10 * time.Second,
+		Transport: transport,
+		Timeout:   10 * time.Second,
 	}
 
 	noInterval := interval == 0
-
-	fmt.Printf("Worker %d 启动 [模式: %s]\n",
-		id,
-		map[bool]string{true: "无间隔", false: fmt.Sprintf("间隔 %v", interval)}[noInterval],
-	)
+	fmt.Printf("Worker %d 启动 [间隔: %v 限速: %v]\n", id,
+		map[bool]string{true: "无", false: interval.String()}[noInterval],
+		func() string {
+			if rateLimit <= 0 {
+				return "不限"
+			}
+			return fmt.Sprintf("%d B/s", rateLimit)
+		}())
 
 	for {
 		select {
@@ -60,18 +89,12 @@ func worker(ctx context.Context, id int, wg *sync.WaitGroup, url string, interva
 			return
 		default:
 			start := time.Now()
-
-			// 创建带有UA的请求
-			req, err := http.NewRequest("GET", url, nil)
-			if err != nil {
-				fmt.Printf("[Worker %d][%s] 创建请求失败: %v\n",
-					id, time.Now().Format("2006-01-02 15:04:05"), err)
-				continue
-			}
-			req.Header.Set("User-Agent", userAgent)
+			req, _ := http.NewRequest("GET", url, nil)
+			req.Header.Set("User-Agent", ua)
 
 			resp, err := client.Do(req)
-			if handled := handleResponse(id, resp, err, start); handled {
+			stop := handleResponse(id, resp, err, start)
+			if stop {
 				return
 			}
 
@@ -92,72 +115,111 @@ func handleResponse(id int, resp *http.Response, err error, start time.Time) (st
 			id, time.Now().Format("2006-01-02 15:04:05"), err)
 		return false
 	}
-
 	defer func() {
-		if resp != nil && resp.Body != nil {
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
-		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
 	}()
 
-	fmt.Printf("[Worker %d][%s] 状态码: %d 耗时: %v\n",
-		id,
-		time.Now().Format("2006-01-02 15:04:05"),
-		resp.StatusCode,
-		time.Since(start).Round(time.Millisecond),
-	)
+	code := resp.StatusCode
+	latency := time.Since(start).Round(time.Millisecond)
+	if code != http.StatusOK {
+		fmt.Printf("[Worker %d][%s] 状态码: %d 延迟: %v\n",
+			id, time.Now().Format("2006-01-02 15:04:05"), code, latency)
+	}
 	return false
 }
 
 func main() {
 	var (
-		url = flag.String("u",
-			getEnvString("u", "https://s3.pysio.online/pcl2-ce/PCL2_CE_x64.exe"),
-			"请求的目标URL地址")
+		url = flag.String("url",
+			getEnvString("url", "https://js.a.kspkg.com/kos/nlav10814/kwai-android-generic-gifmakerrelease-13.7.30.43728_x64_5d82bf.apk"),
+			"目标URL")
 
 		interval = flag.Duration("i",
-			getEnvDuration("i", 0),
-			"请求间隔时间")
+			func() time.Duration {
+				if v, ok := os.LookupEnv("i"); ok {
+					if d, err := time.ParseDuration(v); err == nil {
+						return d
+					}
+				}
+				return 0
+			}(),
+			"请求间隔")
 
 		workers = flag.Int("w",
-			getEnvInt("w", 4),
-			"并发Worker数量")
+			func() int {
+				if v, ok := os.LookupEnv("w"); ok {
+					if i, err := strconv.Atoi(v); err == nil {
+						return i
+					}
+				}
+				return 64
+			}(),
+			"Worker 数量")
 
 		userAgent = flag.String("ua",
 			getEnvString("ua", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"),
 			"User-Agent")
+
+		ipv4Only = flag.Bool("4", getEnvBool("4", false), "仅 IPv4")
+		ipv6Only = flag.Bool("6", getEnvBool("4", false), "仅 IPv6")
+		rateStr  = flag.String("rate", getEnvString("rate", ""), "限速，如 1.5m")
 	)
 	flag.Parse()
 
-	// 参数校验
 	if *workers <= 0 {
-		fmt.Println("[错误] worker数量必须 > 0")
+		fmt.Println("[错误] worker 数量必须 > 0")
 		return
 	}
 	if *interval < 0 {
 		fmt.Println("[错误] 间隔时间不能为负数")
 		return
 	}
+	if *ipv4Only && *ipv6Only {
+		fmt.Println("[错误] 不能同时指定 -4 和 -6")
+		return
+	}
+
+	rateLimit := getEnvBytes("rate", 0)
+	if *rateStr != "" {
+		if r, err := parseBytes(*rateStr); err == nil {
+			rateLimit = r
+		}
+	}
+
+	// 构造 Transport
+	var transport http.RoundTripper
+	{
+		dialer := &net.Dialer{}
+		transport = &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				if *ipv4Only {
+					network = "tcp4"
+				}
+				if *ipv6Only {
+					network = "tcp6"
+				}
+				return dialer.DialContext(ctx, network, addr)
+			},
+		}
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	var wg sync.WaitGroup
-
 	for i := 1; i <= *workers; i++ {
 		wg.Add(1)
-		go worker(ctx, i, &wg, *url, *interval, *userAgent)
+		go worker(ctx, i, &wg, *url, *interval, *userAgent, rateLimit, transport)
 	}
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	fmt.Println("程序已启动，按 Ctrl+C 停止...")
-	<-sigChan
+	<-sig
 
 	fmt.Println("\n接收到停止信号，停止中...")
 	cancel()
 	wg.Wait()
-
-	fmt.Println("所有Worker已安全停止")
+	fmt.Println("所有 Worker 已安全停止")
 }

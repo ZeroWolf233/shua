@@ -17,14 +17,17 @@ docker run -d \
 
 ## 使用
 ### 可选flag
-| 名称 | 默认值                                                                                                              | 说明            |
-|----|------------------------------------------------------------------------------------------------------------------|---------------|
-| u  | https://s3.pysio.online/pcl2-ce/PCL2_CE_x64.exe                                                                  | 请求内容的地址       |
-| w  | 4                                                                                                                | 创建多少个工作进程(线程) |
-| i  | 0s                                                                                                               | 每次请求后的休息时长    |
-| ua | Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36  | 自定义的ua请求头     |
+| 名称    | 默认值                                                                                                             | 说明            |
+|-------|-----------------------------------------------------------------------------------------------------------------|---------------|
+| url   | https://js.a.kspkg.com/kos/nlav10814/kwai-android-generic-gifmakerrelease-13.7.30.43728_x64_5d82bf.apk          | 请求内容的地址       |
+| w     | 64                                                                                                              | 创建多少个工作进程(线程) |
+| i     | 0s                                                                                                              | 每次请求后的休息时长    |
+| ua    | Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 | 自定义的ua请求头     |
+| 4     | 否                                                                                                               | 仅IPv4         |
+| 6     | 否                                                                                                               | 仅IPv6         |
+| rate  | 无                                                                                                               | 限速 (如23.33m)  |
 
 ### 使用示例
 ```bash
-./shua -u https://lf5-j1gamecdn-cn.dailygn.com/obj/lf-game-lf/gdl_app_2682/1233880772355.mp4 -w 128 -i 3s
+./shua -url https://lf5-j1gamecdn-cn.dailygn.com/obj/lf-game-lf/gdl_app_2682/1233880772355.mp4 -w 128 -i 0s -6 -rate 23.33m
 ```
