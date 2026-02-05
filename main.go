@@ -162,8 +162,9 @@ func main() {
 			"User-Agent")
 
 		ipv4Only = flag.Bool("4", getEnvBool("4", false), "仅 IPv4")
-		ipv6Only = flag.Bool("6", getEnvBool("4", false), "仅 IPv6")
+		ipv6Only = flag.Bool("6", getEnvBool("6", false), "仅 IPv6")
 		rateStr  = flag.String("rate", getEnvString("rate", ""), "限速，如 1.5m")
+		bindIP   = flag.String("bind", getEnvString("bind", ""), "指定出口 IP")
 	)
 	flag.Parse()
 
@@ -191,6 +192,15 @@ func main() {
 	var transport http.RoundTripper
 	{
 		dialer := &net.Dialer{}
+		if *bindIP != "" {
+			ip := net.ParseIP(*bindIP)
+			if ip == nil {
+				fmt.Printf("[错误] 无效的出口 IP: %s\n", *bindIP)
+				return
+			}
+			dialer.LocalAddr = &net.TCPAddr{IP: ip}
+			fmt.Printf("使用出口 IP: %s\n", *bindIP)
+		}
 		transport = &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				if *ipv4Only {
