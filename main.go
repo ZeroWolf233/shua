@@ -14,6 +14,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/quic-go/quic-go/http3"
 )
 
 func getEnvString(key, def string) string {
@@ -165,6 +167,7 @@ func main() {
 		ipv6Only = flag.Bool("6", getEnvBool("6", false), "仅 IPv6")
 		rateStr  = flag.String("rate", getEnvString("rate", ""), "限速，如 1.5m")
 		bindIP   = flag.String("bind", getEnvString("bind", ""), "指定出口 IP")
+		isHttp3  = flag.Bool("h3", getEnvBool("h3", false), "使用 HTTP3/QUIC 进行请求")
 	)
 	flag.Parse()
 
@@ -190,7 +193,10 @@ func main() {
 
 	// 构造 Transport
 	var transport http.RoundTripper
-	{
+	if *isHttp3 {
+		transport = &http3.Transport{}
+		fmt.Println("使用 HTTP3/QUIC 模式")
+	} else {
 		dialer := &net.Dialer{}
 		if *bindIP != "" {
 			ip := net.ParseIP(*bindIP)
